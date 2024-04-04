@@ -59,7 +59,7 @@ def predict(input):
     df['SImAge acceleration'] = df['SImAge'] - df['Age']
     df.to_excel(f'{root_dir}/out/df.xlsx')
 
-    df_res = df[['SImAge acceleration']]
+    df_res = df[['SImAge']]
     df_res.to_excel(f'{root_dir}/out/output.xlsx')
 
     mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)
