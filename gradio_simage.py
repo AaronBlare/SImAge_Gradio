@@ -60,7 +60,7 @@ def predict(input):
     df.to_excel(f'{root_dir}/out/df.xlsx')
 
     df_res = df[['SImAge']]
-    df_res.to_excel(f'{root_dir}/out/output.xlsx')
+    df_res.to_excel(f'{root_dir}/out/result.xlsx')
 
     mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)
     rho = pearsonr(df['Age'].values, df['SImAge'].values).statistic
@@ -108,13 +108,15 @@ def predict(input):
         max_display=len(feats),
         plot_type="violin",
     )
-    plt.savefig(f'{root_dir}/out/shap.svg', bbox_inches='tight')
+    plt.savefig(f'{root_dir}/out/shap_beeswarm.svg', bbox_inches='tight')
 
-    return [f'MAE: {round(mae, 3)}, Pearson Rho: {round(rho, 3)}',
-            f'{root_dir}/out/output.xlsx',
-            f'{root_dir}/out/scatter.svg', f'{root_dir}/out/violin.svg', f'{root_dir}/out/shap.svg',
+    return [f'MAE: {round(mae, 3)}\nPearson Rho: {round(rho, 3)}',
+            f'{root_dir}/out/result.xlsx',
+            [(f'{root_dir}/out/scatter.svg', 'Scatter'), (f'{root_dir}/out/violin.svg', 'Violin'),
+             (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')],
+            gr.update(visible=True), gr.update(visible=True),
             gr.update(choices=list(df.index.values), value=list(df.index.values)[0], interactive=True, visible=True),
-            gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)]
+            gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)]
 
 
 def explain(input):
@@ -139,32 +141,97 @@ def explain(input):
     age = df.loc[trgt_id, ['Age']].values[0]
     simage = df.loc[trgt_id, ['SImAge']].values[0]
 
-    return [f'Real age: {round(age, 3)}, SImAge: {round(simage, 3)}',
+    order = np.argsort(-np.abs(shap_values_trgt))
+    locally_ordered_feats = [feats[i] for i in order]
+
+    return [f'Real age: {round(age, 3)}\nSImAge: {round(simage, 3)}',
+            f'{locally_ordered_feats[0]}\n{locally_ordered_feats[1]}\n{locally_ordered_feats[2]}',
             f'{root_dir}/out/waterfall_{trgt_id}.svg']
 
 
-with gr.Blocks(theme=gr.themes.Soft()) as app:
+def clear():
+    return gr.update(interactive=False), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(
+        visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(
+        visible=False), gr.update(visible=False)
+
+
+def active():
+    return gr.update(interactive=True)
+
+
+css = """
+h2 {
+    text-align: center;
+    display:block;
+}
+"""
+
+with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
+    gr.Markdown(
+        """
+        <h2>Calculate your immunological age using SImAge model</h2>
+        """
+    )
     with gr.Row():
         with gr.Column():
+            gr.Markdown(
+                """
+                ### Submit immunology data
+                The file should contain chronological age ("Age" column) and immunology data for the following 10 cytokines:
+
+                CXCL9, CCL22, IL6, PDGFB, CD40LG, IL27, VEGFA, CSF1, PDGFA, CXCL10
+                """
+            )
             input_file = gr.File(label='Input file', file_count='single', file_types=['.xlsx', '.csv'])
-            submit_button = gr.Button("Submit data", variant="primary")
+            submit_button = gr.Button("Submit data", variant="primary", interactive=False)
+        with gr.Column():
+            with gr.Row():
+                output_text = gr.Text(label='Main metrics')
+                output_file = gr.File(label='Result file', file_types=['.xlsx'], interactive=False)
+            with gr.Row():
+                gallery = gr.Gallery(label='Figures Gallery', object_fit='cover', columns=2, rows=2)
+    title_shap = gr.Markdown(
+        """
+        <h2>Local explainability</h2>
+        """
+        , visible=False)
+    with gr.Row():
+        with gr.Column():
+            text_shap = gr.Markdown(
+                """
+                Select a record to get an explanation of the SImAge prediction:
+                """
+                , visible=False)
             input_shap = gr.Dropdown(label='Choose a sample', visible=False)
             shap_button = gr.Button("Get explanation", variant="primary", visible=False)
         with gr.Column():
-            output_text = gr.Text(label='Main metrics')
-            output_file = gr.File(label='Output file', file_types=['.xlsx'], interactive=False)
             with gr.Row():
-                scatter_image = gr.Image(label='Scatter')
-                violin_image = gr.Image(label='Violin')
-                shap_image = gr.Image(label='SHAP')
-            shap_local = gr.Text(label='Main metrics', visible=False)
-            shap_waterfall = gr.Image(label='Waterfall', visible=False)
+                with gr.Column(scale=1):
+                    shap_local = gr.Text(label='Sample info', visible=False)
+                    shap_cyto = gr.Text(label='Most important cytokines', visible=False)
+                with gr.Column(scale=3):
+                    shap_waterfall = gr.Image(show_label=False, visible=False)
     submit_button.click(fn=predict,
                         inputs=[input_file],
-                        outputs=[output_text, output_file, scatter_image, violin_image, shap_image, input_shap, shap_button, shap_local, shap_waterfall]
+                        outputs=[output_text, output_file, gallery, title_shap, text_shap, input_shap, shap_button, shap_local,
+                                 shap_cyto, shap_waterfall]
                         )
     shap_button.click(fn=explain,
                       inputs=[input_shap],
-                      outputs=[shap_local, shap_waterfall]
+                      outputs=[shap_local, shap_cyto, shap_waterfall]
                       )
-app.launch(share=True)
+    input_file.clear(fn=clear,
+                     inputs=[],
+                     outputs=[submit_button, output_text, output_file, gallery,
+                              title_shap, text_shap, input_shap, shap_button, shap_local, shap_cyto, shap_waterfall])
+    input_file.upload(fn=active,
+                      inputs=[],
+                      outputs=[submit_button])
+    gr.Markdown(
+        """
+        Reference:
+        
+        Kalyakulina, A., Yusipov, I., Kondakova, E., Bacalini, M. G., Franceschi, C., Vedunova, M., & Ivanchenko, M. (2023). [Small immunological clocks identified by deep learning and gradient boosting](https://www.frontiersin.org/journals/immunology/articles/10.3389/fimmu.2023.1177611/full). Frontiers in Immunology, 14, 1177611.
+        """
+    )
+app.launch()
