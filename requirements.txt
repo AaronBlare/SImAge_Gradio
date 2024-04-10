@@ -53,5 +53,4 @@ pytest          # tests
 # --------- attacks --------- #
 adversarial-robustness-toolbox
 
-# --------- attacks --------- #
 gradio

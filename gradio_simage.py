@@ -11,6 +11,12 @@ from sklearn.metrics import mean_absolute_error
 from scipy.stats import pearsonr
 from models.tabular.widedeep.ft_transformer import WDFTTransformerModel
 import gradio as gr
+from scipy import stats
+
+import warnings
+warnings.filterwarnings("ignore", ".*will save all targets and predictions in the buffer. For large datasets, this may lead to large memory footprint.*")
+warnings.filterwarnings("ignore", ".*is non-interactive, and thus cannot be shown*")
+
 
 root_dir = Path(os.getcwd())
 
@@ -53,6 +59,8 @@ explainer = shap_dict['explainer']
 
 def predict(input):
     df = pd.read_excel(input, index_col=0)
+    if "Age" not in df.columns:
+        raise gr.Error("No 'Age' column in the input file!")
     df = df.loc[:, feats + ['Age']]
 
     df['SImAge'] = model(torch.from_numpy(df.loc[:, feats].values)).cpu().detach().numpy().ravel()
@@ -64,6 +72,8 @@ def predict(input):
 
     mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)
     rho = pearsonr(df['Age'].values, df['SImAge'].values).statistic
+
+    plt.close('all')
 
     sns.set_theme(style='whitegrid')
     fig, ax = plt.subplots(figsize=(4, 4))
@@ -90,16 +100,20 @@ def predict(input):
     ax.set_ylim(0, 120)
     plt.savefig(f'{root_dir}/out/scatter.svg', bbox_inches='tight')
 
+    plt.close('all')
+
     sns.set_theme(style='whitegrid')
     fig, ax = plt.subplots(figsize=(2, 4))
     sns.violinplot(
         data=df,
         y='SImAge acceleration',
-        scale='width',
+        density_norm='width',
         color='blue',
         saturation=0.75,
     )
     plt.savefig(f'{root_dir}/out/violin.svg', bbox_inches='tight')
+
+    plt.close('all')
 
     shap.summary_plot(
         shap_values=shap_values_train.values,
@@ -110,10 +124,12 @@ def predict(input):
     )
     plt.savefig(f'{root_dir}/out/shap_beeswarm.svg', bbox_inches='tight')
 
-    return [f'MAE: {round(mae, 3)}\nPearson Rho: {round(rho, 3)}',
-            f'{root_dir}/out/result.xlsx',
-            [(f'{root_dir}/out/scatter.svg', 'Scatter'), (f'{root_dir}/out/violin.svg', 'Violin'),
-             (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')],
+    plt.close('all')
+
+    return [gr.update(value=f'MAE: {round(mae, 3)}\nPearson Rho: {round(rho, 3)}', visible=True),
+            gr.update(value=f'{root_dir}/out/result.xlsx', visible=True),
+            gr.update(value=[(f'{root_dir}/out/scatter.svg', 'Scatter'), (f'{root_dir}/out/violin.svg', 'Violin'),
+             (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')], visible=True),
             gr.update(visible=True), gr.update(visible=True),
             gr.update(choices=list(df.index.values), value=list(df.index.values)[0], interactive=True, visible=True),
             gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)]
@@ -125,6 +141,14 @@ def explain(input):
     trgt_id = input
     shap_values_trgt = explainer.shap_values(df.loc[trgt_id, feats].values)
     base_value = explainer.expected_value[0]
+
+    age = df.loc[trgt_id, ['Age']].values[0]
+    simage = df.loc[trgt_id, ['SImAge']].values[0]
+
+    order = np.argsort(-np.abs(shap_values_trgt))
+    locally_ordered_feats = [feats[i] for i in order]
+
+    plt.close('all')
 
     shap.plots.waterfall(
         shap.Explanation(
@@ -138,21 +162,89 @@ def explain(input):
     )
     plt.savefig(f'{root_dir}/out/waterfall_{trgt_id}.svg', bbox_inches='tight')
 
-    age = df.loc[trgt_id, ['Age']].values[0]
-    simage = df.loc[trgt_id, ['SImAge']].values[0]
+    plt.close('all')
 
-    order = np.argsort(-np.abs(shap_values_trgt))
-    locally_ordered_feats = [feats[i] for i in order]
+    age_window = 5
+    trgt_age = df.at[trgt_id, 'Age']
+    trgt_simage = df.at[trgt_id, 'SImAge']
+    trgt_simage_acc = df.at[trgt_id, 'SImAge acceleration']
+    ids_near = df.index[(df['Age'] >= trgt_age - age_window) & (df['Age'] < trgt_age + age_window)]
+    trgt_simage_acc_prctl = stats.percentileofscore(df.loc[ids_near, 'SImAge acceleration'], trgt_simage_acc)
+
+    sns.set(style='whitegrid', font_scale=1.5)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    kdeplot = sns.kdeplot(
+        data=df.loc[ids_near, :],
+        x='SImAge acceleration',
+        color='gray',
+        linewidth=4,
+        cut=0,
+        ax=ax
+    )
+    kdeline = ax.lines[0]
+    xs = kdeline.get_xdata()
+    ys = kdeline.get_ydata()
+    ax.fill_between(xs, 0, ys, where=(xs <= trgt_simage_acc), interpolate=True, facecolor='dodgerblue', alpha=0.7)
+    ax.fill_between(xs, 0, ys, where=(xs >= trgt_simage_acc), interpolate=True, facecolor='crimson', alpha=0.7)
+    ax.vlines(trgt_simage_acc, 0, np.interp(trgt_simage_acc, xs, ys), color='black', linewidth=6)
+    ax.text(np.mean([min(xs), trgt_simage_acc]), 0.1 * max(ys), f"{trgt_simage_acc_prctl:0.1f}%", fontstyle="oblique",
+            color="black", ha="center", va="center")
+    ax.text(np.mean([max(xs), trgt_simage_acc]), 0.1 * max(ys), f"{100 - trgt_simage_acc_prctl:0.1f}%",
+            fontstyle="oblique", color="black", ha="center", va="center")
+    fig.savefig(f"{root_dir}/out/kde_aa_{trgt_id}.svg", bbox_inches='tight')
+    plt.close(fig)
+
+    sns.set(style='whitegrid', font_scale=0.7)
+    n_rows = 2
+    n_cols = 5
+    fig_height = 4
+    fig_width = 10
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), gridspec_kw={}, sharey=False, sharex=False)
+    for feat_id, feat in enumerate(feats):
+        row_id, col_id = divmod(feat_id, n_cols)
+        kdeplot = sns.kdeplot(
+            data=df.loc[ids_near, :],
+            x=feat,
+            color='gray',
+            linewidth=1,
+            cut=0,
+            ax=axs[row_id, col_id]
+        )
+        kdeline = axs[row_id, col_id].lines[0]
+        xs = kdeline.get_xdata()
+        ys = kdeline.get_ydata()
+        trgt_val = df.at[trgt_id, feat]
+        trgt_prctl = stats.percentileofscore(df.loc[ids_near, feat], trgt_val)
+        axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs <= trgt_val), interpolate=True, facecolor='dodgerblue',
+                                         alpha=0.7)
+        axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs >= trgt_val), interpolate=True, facecolor='crimson',
+                                         alpha=0.7)
+        axs[row_id, col_id].vlines(trgt_val, 0, np.interp(trgt_val, xs, ys), color='black', linewidth=1.5)
+        axs[row_id, col_id].text(np.mean([min(xs), trgt_val]), 0.1 * max(ys), f"{trgt_prctl:0.1f}%",
+                                 fontstyle="oblique",
+                                 color="black", ha="center", va="center")
+        axs[row_id, col_id].text(np.mean([max(xs), trgt_val]), 0.1 * max(ys), f"{100 - trgt_prctl:0.1f}%",
+                                 fontstyle="oblique",
+                                 color="black", ha="center", va="center")
+        axs[row_id, col_id].ticklabel_format(style='scientific', scilimits=(-1, 1), axis='y', useOffset=True)
+    fig.tight_layout()
+    fig.savefig(f"{root_dir}/out/kde_feats_{trgt_id}.svg", bbox_inches='tight')
+    plt.close(fig)
 
     return [f'Real age: {round(age, 3)}\nSImAge: {round(simage, 3)}',
             f'{locally_ordered_feats[0]}\n{locally_ordered_feats[1]}\n{locally_ordered_feats[2]}',
-            f'{root_dir}/out/waterfall_{trgt_id}.svg']
+            [(f'{root_dir}/out/waterfall_{trgt_id}.svg', 'Waterfall'),
+             (f'{root_dir}/out/kde_aa_{trgt_id}.svg', 'Age Acceleration KDE'),
+             (f'{root_dir}/out/kde_feats_{trgt_id}.svg', 'Features KDE')]]
 
 
 def clear():
-    return gr.update(interactive=False), gr.update(value=None), gr.update(value=None), gr.update(value=None), gr.update(
-        visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(
-        visible=False), gr.update(visible=False)
+    return (gr.update(interactive=False),
+            gr.update(value=None, visible=False),
+            gr.update(value=None, visible=False),
+            gr.update(value=None, visible=False),
+            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
 
 
 def active():
@@ -186,10 +278,10 @@ with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
             submit_button = gr.Button("Submit data", variant="primary", interactive=False)
         with gr.Column():
             with gr.Row():
-                output_text = gr.Text(label='Main metrics')
-                output_file = gr.File(label='Result file', file_types=['.xlsx'], interactive=False)
+                output_text = gr.Text(label='Main metrics', visible=False)
+                output_file = gr.File(label='Result file', file_types=['.xlsx'], interactive=False, visible=False)
             with gr.Row():
-                gallery = gr.Gallery(label='Figures Gallery', object_fit='cover', columns=2, rows=2)
+                gallery = gr.Gallery(label='Figures Gallery', object_fit='cover', columns=2, rows=2, visible=False)
     title_shap = gr.Markdown(
         """
         <h2>Local explainability</h2>
@@ -210,20 +302,20 @@ with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
                     shap_local = gr.Text(label='Sample info', visible=False)
                     shap_cyto = gr.Text(label='Most important cytokines', visible=False)
                 with gr.Column(scale=3):
-                    shap_waterfall = gr.Image(show_label=False, visible=False)
+                    shap_gallery = gr.Gallery(label='Local Explainability Gallery', object_fit='cover', columns=2, rows=2, visible=False)
     submit_button.click(fn=predict,
                         inputs=[input_file],
                         outputs=[output_text, output_file, gallery, title_shap, text_shap, input_shap, shap_button, shap_local,
-                                 shap_cyto, shap_waterfall]
+                                 shap_cyto, shap_gallery]
                         )
     shap_button.click(fn=explain,
                       inputs=[input_shap],
-                      outputs=[shap_local, shap_cyto, shap_waterfall]
+                      outputs=[shap_local, shap_cyto, shap_gallery]
                       )
     input_file.clear(fn=clear,
                      inputs=[],
                      outputs=[submit_button, output_text, output_file, gallery,
-                              title_shap, text_shap, input_shap, shap_button, shap_local, shap_cyto, shap_waterfall])
+                              title_shap, text_shap, input_shap, shap_button, shap_local, shap_cyto, shap_gallery])
     input_file.upload(fn=active,
                       inputs=[],
                       outputs=[submit_button])
