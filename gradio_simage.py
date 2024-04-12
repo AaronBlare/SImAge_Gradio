@@ -61,6 +61,9 @@ def predict(input):
     df = pd.read_excel(input, index_col=0)
     if "Age" not in df.columns:
         raise gr.Error("No 'Age' column in the input file!")
+    missed_features = [feature for feature in feats if feature not in df.columns]
+    if len(missed_features) > 0:
+        raise gr.Error(f"No {', '.join(missed_features)} column(s) in the input file!")
     df = df.loc[:, feats + ['Age']]
 
     df['SImAge'] = model(torch.from_numpy(df.loc[:, feats].values)).cpu().detach().numpy().ravel()
@@ -70,8 +73,9 @@ def predict(input):
     df_res = df[['SImAge']]
     df_res.to_excel(f'{root_dir}/out/result.xlsx')
 
-    mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)
-    rho = pearsonr(df['Age'].values, df['SImAge'].values).statistic
+    if len(df) > 1:
+        mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)
+        rho = pearsonr(df['Age'].values, df['SImAge'].values).statistic
 
     plt.close('all')
 
@@ -102,18 +106,18 @@ def predict(input):
 
     plt.close('all')
 
-    sns.set_theme(style='whitegrid')
-    fig, ax = plt.subplots(figsize=(2, 4))
-    sns.violinplot(
-        data=df,
-        y='SImAge acceleration',
-        density_norm='width',
-        color='blue',
-        saturation=0.75,
-    )
-    plt.savefig(f'{root_dir}/out/violin.svg', bbox_inches='tight')
-
-    plt.close('all')
+    if len(df) > 1:
+        sns.set_theme(style='whitegrid')
+        fig, ax = plt.subplots(figsize=(2, 4))
+        sns.violinplot(
+            data=df,
+            y='SImAge acceleration',
+            density_norm='width',
+            color='blue',
+            saturation=0.75,
+        )
+        plt.savefig(f'{root_dir}/out/violin.svg', bbox_inches='tight')
+        plt.close('all')
 
     shap.summary_plot(
         shap_values=shap_values_train.values,
@@ -126,10 +130,19 @@ def predict(input):
 
     plt.close('all')
 
-    return [gr.update(value=f'MAE: {round(mae, 3)}\nPearson Rho: {round(rho, 3)}', visible=True),
+    if len(df) > 1:
+        return_metrics = gr.update(value=f'MAE: {round(mae, 3)}\nPearson Rho: {round(rho, 3)}', visible=True)
+        return_gallery = gr.update(value=[(f'{root_dir}/out/scatter.svg', 'Scatter'),
+                                          (f'{root_dir}/out/violin.svg', 'Violin'),
+                                          (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')], visible=True)
+    else:
+        return_metrics = gr.update(value=f'Only one sample.\nNo metrics can be calculated.', visible=True)
+        return_gallery = gr.update(value=[(f'{root_dir}/out/scatter.svg', 'Scatter'),
+                                          (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')], visible=True)
+
+    return [return_metrics,
             gr.update(value=f'{root_dir}/out/result.xlsx', visible=True),
-            gr.update(value=[(f'{root_dir}/out/scatter.svg', 'Scatter'), (f'{root_dir}/out/violin.svg', 'Violin'),
-             (f'{root_dir}/out/shap_beeswarm.svg', 'SHAP Beeswarm')], visible=True),
+            return_gallery,
             gr.update(visible=True), gr.update(visible=True),
             gr.update(choices=list(df.index.values), value=list(df.index.values)[0], interactive=True, visible=True),
             gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)]
@@ -164,78 +177,85 @@ def explain(input):
 
     plt.close('all')
 
-    age_window = 5
-    trgt_age = df.at[trgt_id, 'Age']
-    trgt_simage = df.at[trgt_id, 'SImAge']
-    trgt_simage_acc = df.at[trgt_id, 'SImAge acceleration']
-    ids_near = df.index[(df['Age'] >= trgt_age - age_window) & (df['Age'] < trgt_age + age_window)]
-    trgt_simage_acc_prctl = stats.percentileofscore(df.loc[ids_near, 'SImAge acceleration'], trgt_simage_acc)
+    if len(df) > 1:
 
-    sns.set(style='whitegrid', font_scale=1.5)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    kdeplot = sns.kdeplot(
-        data=df.loc[ids_near, :],
-        x='SImAge acceleration',
-        color='gray',
-        linewidth=4,
-        cut=0,
-        ax=ax
-    )
-    kdeline = ax.lines[0]
-    xs = kdeline.get_xdata()
-    ys = kdeline.get_ydata()
-    ax.fill_between(xs, 0, ys, where=(xs <= trgt_simage_acc), interpolate=True, facecolor='dodgerblue', alpha=0.7)
-    ax.fill_between(xs, 0, ys, where=(xs >= trgt_simage_acc), interpolate=True, facecolor='crimson', alpha=0.7)
-    ax.vlines(trgt_simage_acc, 0, np.interp(trgt_simage_acc, xs, ys), color='black', linewidth=6)
-    ax.text(np.mean([min(xs), trgt_simage_acc]), 0.1 * max(ys), f"{trgt_simage_acc_prctl:0.1f}%", fontstyle="oblique",
-            color="black", ha="center", va="center")
-    ax.text(np.mean([max(xs), trgt_simage_acc]), 0.1 * max(ys), f"{100 - trgt_simage_acc_prctl:0.1f}%",
-            fontstyle="oblique", color="black", ha="center", va="center")
-    fig.savefig(f"{root_dir}/out/kde_aa_{trgt_id}.svg", bbox_inches='tight')
-    plt.close(fig)
+        age_window = 5
+        trgt_age = df.at[trgt_id, 'Age']
+        trgt_simage = df.at[trgt_id, 'SImAge']
+        trgt_simage_acc = df.at[trgt_id, 'SImAge acceleration']
+        ids_near = df.index[(df['Age'] >= trgt_age - age_window) & (df['Age'] < trgt_age + age_window)]
+        trgt_simage_acc_prctl = stats.percentileofscore(df.loc[ids_near, 'SImAge acceleration'], trgt_simage_acc)
 
-    sns.set(style='whitegrid', font_scale=0.7)
-    n_rows = 2
-    n_cols = 5
-    fig_height = 4
-    fig_width = 10
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), gridspec_kw={}, sharey=False, sharex=False)
-    for feat_id, feat in enumerate(feats):
-        row_id, col_id = divmod(feat_id, n_cols)
+        sns.set(style='whitegrid', font_scale=1.5)
+        fig, ax = plt.subplots(figsize=(10, 6))
         kdeplot = sns.kdeplot(
             data=df.loc[ids_near, :],
-            x=feat,
+            x='SImAge acceleration',
             color='gray',
-            linewidth=1,
+            linewidth=4,
             cut=0,
-            ax=axs[row_id, col_id]
+            ax=ax
         )
-        kdeline = axs[row_id, col_id].lines[0]
+        kdeline = ax.lines[0]
         xs = kdeline.get_xdata()
         ys = kdeline.get_ydata()
-        trgt_val = df.at[trgt_id, feat]
-        trgt_prctl = stats.percentileofscore(df.loc[ids_near, feat], trgt_val)
-        axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs <= trgt_val), interpolate=True, facecolor='dodgerblue',
-                                         alpha=0.7)
-        axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs >= trgt_val), interpolate=True, facecolor='crimson',
-                                         alpha=0.7)
-        axs[row_id, col_id].vlines(trgt_val, 0, np.interp(trgt_val, xs, ys), color='black', linewidth=1.5)
-        axs[row_id, col_id].text(np.mean([min(xs), trgt_val]), 0.1 * max(ys), f"{trgt_prctl:0.1f}%",
-                                 fontstyle="oblique",
-                                 color="black", ha="center", va="center")
-        axs[row_id, col_id].text(np.mean([max(xs), trgt_val]), 0.1 * max(ys), f"{100 - trgt_prctl:0.1f}%",
-                                 fontstyle="oblique",
-                                 color="black", ha="center", va="center")
-        axs[row_id, col_id].ticklabel_format(style='scientific', scilimits=(-1, 1), axis='y', useOffset=True)
-    fig.tight_layout()
-    fig.savefig(f"{root_dir}/out/kde_feats_{trgt_id}.svg", bbox_inches='tight')
-    plt.close(fig)
+        ax.fill_between(xs, 0, ys, where=(xs <= trgt_simage_acc), interpolate=True, facecolor='dodgerblue', alpha=0.7)
+        ax.fill_between(xs, 0, ys, where=(xs >= trgt_simage_acc), interpolate=True, facecolor='crimson', alpha=0.7)
+        ax.vlines(trgt_simage_acc, 0, np.interp(trgt_simage_acc, xs, ys), color='black', linewidth=6)
+        ax.text(np.mean([min(xs), trgt_simage_acc]), 0.1 * max(ys), f"{trgt_simage_acc_prctl:0.1f}%", fontstyle="oblique",
+                color="black", ha="center", va="center")
+        ax.text(np.mean([max(xs), trgt_simage_acc]), 0.1 * max(ys), f"{100 - trgt_simage_acc_prctl:0.1f}%",
+                fontstyle="oblique", color="black", ha="center", va="center")
+        fig.savefig(f"{root_dir}/out/kde_aa_{trgt_id}.svg", bbox_inches='tight')
+        plt.close(fig)
+
+        sns.set(style='whitegrid', font_scale=0.7)
+        n_rows = 2
+        n_cols = 5
+        fig_height = 4
+        fig_width = 10
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), gridspec_kw={}, sharey=False, sharex=False)
+        for feat_id, feat in enumerate(feats):
+            row_id, col_id = divmod(feat_id, n_cols)
+            kdeplot = sns.kdeplot(
+                data=df.loc[ids_near, :],
+                x=feat,
+                color='gray',
+                linewidth=1,
+                cut=0,
+                ax=axs[row_id, col_id]
+            )
+            kdeline = axs[row_id, col_id].lines[0]
+            xs = kdeline.get_xdata()
+            ys = kdeline.get_ydata()
+            trgt_val = df.at[trgt_id, feat]
+            trgt_prctl = stats.percentileofscore(df.loc[ids_near, feat], trgt_val)
+            axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs <= trgt_val), interpolate=True, facecolor='dodgerblue',
+                                             alpha=0.7)
+            axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs >= trgt_val), interpolate=True, facecolor='crimson',
+                                             alpha=0.7)
+            axs[row_id, col_id].vlines(trgt_val, 0, np.interp(trgt_val, xs, ys), color='black', linewidth=1.5)
+            axs[row_id, col_id].text(np.mean([min(xs), trgt_val]), 0.1 * max(ys), f"{trgt_prctl:0.1f}%",
+                                     fontstyle="oblique",
+                                     color="black", ha="center", va="center")
+            axs[row_id, col_id].text(np.mean([max(xs), trgt_val]), 0.1 * max(ys), f"{100 - trgt_prctl:0.1f}%",
+                                     fontstyle="oblique",
+                                     color="black", ha="center", va="center")
+            axs[row_id, col_id].ticklabel_format(style='scientific', scilimits=(-1, 1), axis='y', useOffset=True)
+        fig.tight_layout()
+        fig.savefig(f"{root_dir}/out/kde_feats_{trgt_id}.svg", bbox_inches='tight')
+        plt.close(fig)
+
+    if len(df) > 1:
+        return_gallery = [(f'{root_dir}/out/waterfall_{trgt_id}.svg', 'Waterfall'),
+                          (f'{root_dir}/out/kde_aa_{trgt_id}.svg', 'Age Acceleration KDE'),
+                          (f'{root_dir}/out/kde_feats_{trgt_id}.svg', 'Features KDE')]
+    else:
+        return_gallery = [(f'{root_dir}/out/waterfall_{trgt_id}.svg', 'Waterfall')]
 
     return [f'Real age: {round(age, 3)}\nSImAge: {round(simage, 3)}',
             f'{locally_ordered_feats[0]}\n{locally_ordered_feats[1]}\n{locally_ordered_feats[2]}',
-            [(f'{root_dir}/out/waterfall_{trgt_id}.svg', 'Waterfall'),
-             (f'{root_dir}/out/kde_aa_{trgt_id}.svg', 'Age Acceleration KDE'),
-             (f'{root_dir}/out/kde_feats_{trgt_id}.svg', 'Features KDE')]]
+            return_gallery]
 
 
 def clear():
@@ -244,7 +264,7 @@ def clear():
             gr.update(value=None, visible=False),
             gr.update(value=None, visible=False),
             gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
-            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+            gr.update(value=None, visible=False), gr.update(value=None, visible=False), gr.update(value=None, visible=False))
 
 
 def active():
