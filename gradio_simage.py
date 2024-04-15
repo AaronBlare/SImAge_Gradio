@@ -14,9 +14,10 @@ import gradio as gr
 from scipy import stats
 
 import warnings
-warnings.filterwarnings("ignore", ".*will save all targets and predictions in the buffer. For large datasets, this may lead to large memory footprint.*")
-warnings.filterwarnings("ignore", ".*is non-interactive, and thus cannot be shown*")
 
+warnings.filterwarnings("ignore",
+                        ".*will save all targets and predictions in the buffer. For large datasets, this may lead to large memory footprint.*")
+warnings.filterwarnings("ignore", ".*is non-interactive, and thus cannot be shown*")
 
 root_dir = Path(os.getcwd())
 
@@ -58,13 +59,27 @@ explainer = shap_dict['explainer']
 
 
 def predict(input):
-    df = pd.read_excel(input, index_col=0)
+    if input.endswith('xlsx'):
+        df = pd.read_excel(input, index_col=0)
+    elif input.endswith('csv'):
+        df = pd.read_csv(input, index_col=0)
+    else:
+        raise gr.Error(f"Unknown file type!")
     if "Age" not in df.columns:
         raise gr.Error("No 'Age' column in the input file!")
     missed_features = [feature for feature in feats if feature not in df.columns]
     if len(missed_features) > 0:
         raise gr.Error(f"No {', '.join(missed_features)} column(s) in the input file!")
-    df = df.loc[:, feats + ['Age']]
+    try:
+        df = df.loc[:, feats + ['Age']]
+    except ValueError:
+        raise gr.Error(f"Non-numeric value in 'Age' column!")
+    df = df.astype({'Age': 'float'})
+    for feat in feats:
+        try:
+            df = df.astype({feat: 'float'})
+        except ValueError:
+            raise gr.Error(f"Non-numeric value in '{feat}' column!")
 
     df['SImAge'] = model(torch.from_numpy(df.loc[:, feats].values)).cpu().detach().numpy().ravel()
     df['SImAge acceleration'] = df['SImAge'] - df['Age']
@@ -202,7 +217,8 @@ def explain(input):
         ax.fill_between(xs, 0, ys, where=(xs <= trgt_simage_acc), interpolate=True, facecolor='dodgerblue', alpha=0.7)
         ax.fill_between(xs, 0, ys, where=(xs >= trgt_simage_acc), interpolate=True, facecolor='crimson', alpha=0.7)
         ax.vlines(trgt_simage_acc, 0, np.interp(trgt_simage_acc, xs, ys), color='black', linewidth=6)
-        ax.text(np.mean([min(xs), trgt_simage_acc]), 0.1 * max(ys), f"{trgt_simage_acc_prctl:0.1f}%", fontstyle="oblique",
+        ax.text(np.mean([min(xs), trgt_simage_acc]), 0.1 * max(ys), f"{trgt_simage_acc_prctl:0.1f}%",
+                fontstyle="oblique",
                 color="black", ha="center", va="center")
         ax.text(np.mean([max(xs), trgt_simage_acc]), 0.1 * max(ys), f"{100 - trgt_simage_acc_prctl:0.1f}%",
                 fontstyle="oblique", color="black", ha="center", va="center")
@@ -214,7 +230,8 @@ def explain(input):
         n_cols = 5
         fig_height = 4
         fig_width = 10
-        fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), gridspec_kw={}, sharey=False, sharex=False)
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height), gridspec_kw={}, sharey=False,
+                                sharex=False)
         for feat_id, feat in enumerate(feats):
             row_id, col_id = divmod(feat_id, n_cols)
             kdeplot = sns.kdeplot(
@@ -230,7 +247,8 @@ def explain(input):
             ys = kdeline.get_ydata()
             trgt_val = df.at[trgt_id, feat]
             trgt_prctl = stats.percentileofscore(df.loc[ids_near, feat], trgt_val)
-            axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs <= trgt_val), interpolate=True, facecolor='dodgerblue',
+            axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs <= trgt_val), interpolate=True,
+                                             facecolor='dodgerblue',
                                              alpha=0.7)
             axs[row_id, col_id].fill_between(xs, 0, ys, where=(xs >= trgt_val), interpolate=True, facecolor='crimson',
                                              alpha=0.7)
@@ -264,11 +282,16 @@ def clear():
             gr.update(value=None, visible=False),
             gr.update(value=None, visible=False),
             gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
-            gr.update(value=None, visible=False), gr.update(value=None, visible=False), gr.update(value=None, visible=False))
+            gr.update(value=None, visible=False), gr.update(value=None, visible=False),
+            gr.update(value=None, visible=False))
 
 
-def active():
-    return gr.update(interactive=True)
+def check_size(input):
+    curr_file_size = os.path.getsize(input)
+    if curr_file_size > 1024 * 1024:
+        raise gr.Error(f"File exceeds 1 MB limit!")
+    else:
+        return gr.update(interactive=True)
 
 
 css = """
@@ -294,7 +317,7 @@ with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
                 CXCL9, CCL22, IL6, PDGFB, CD40LG, IL27, VEGFA, CSF1, PDGFA, CXCL10
                 """
             )
-            input_file = gr.File(label='Input file', file_count='single', file_types=['.xlsx', '.csv'])
+            input_file = gr.File(label='Input file', file_count='single', file_types=['.xlsx', 'csv'])
             submit_button = gr.Button("Submit data", variant="primary", interactive=False)
         with gr.Column():
             with gr.Row():
@@ -322,10 +345,12 @@ with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
                     shap_local = gr.Text(label='Sample info', visible=False)
                     shap_cyto = gr.Text(label='Most important cytokines', visible=False)
                 with gr.Column(scale=3):
-                    shap_gallery = gr.Gallery(label='Local Explainability Gallery', object_fit='cover', columns=2, rows=2, visible=False)
+                    shap_gallery = gr.Gallery(label='Local Explainability Gallery', object_fit='cover', columns=2,
+                                              rows=2, visible=False)
     submit_button.click(fn=predict,
                         inputs=[input_file],
-                        outputs=[output_text, output_file, gallery, title_shap, text_shap, input_shap, shap_button, shap_local,
+                        outputs=[output_text, output_file, gallery, title_shap, text_shap, input_shap, shap_button,
+                                 shap_local,
                                  shap_cyto, shap_gallery]
                         )
     shap_button.click(fn=explain,
@@ -336,8 +361,8 @@ with gr.Blocks(css=css, theme=gr.themes.Soft(), title='SImAge') as app:
                      inputs=[],
                      outputs=[submit_button, output_text, output_file, gallery,
                               title_shap, text_shap, input_shap, shap_button, shap_local, shap_cyto, shap_gallery])
-    input_file.upload(fn=active,
-                      inputs=[],
+    input_file.upload(fn=check_size,
+                      inputs=[input_file],
                       outputs=[submit_button])
     gr.Markdown(
         """
