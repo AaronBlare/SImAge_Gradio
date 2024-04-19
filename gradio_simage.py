@@ -41,6 +41,10 @@ feats = [
 
 fn_shap = f"{root_dir}/data/shap.pickle"
 
+out_dir = f"{root_dir}/out"
+if not os.path.exists(out_dir):
+   os.makedirs(out_dir)
+
 
 def predict_func(x):
     batch = {

@@ -1,17 +1,14 @@
 # --------- pytorch --------- #
-torch>=1.10.0
-torchvision>=0.11.0
+torch==2.2.2
+torchvision==0.17.2
 pytorch-lightning==1.6.4
 torchmetrics==0.9.1
 pytorch-widedeep==1.1.1
 
 # --------- models --------- #
-scikit-learn>=1.1.3
-shap
-xgboost
-catboost
-lightgbm
-scipy
+scikit-learn>=1.3.0
+shap==0.45.0
+scipy==1.12.0
 statsmodels
 
 # --------- data processing --------- #
@@ -22,6 +19,7 @@ sdv==1.4.0
 pyod==1.0.6
 missingno==0.5.1
 opentsne
+openpyxl
 
 # --------- hydra --------- #
 hydra-core==1.2.0
@@ -31,9 +29,8 @@ omegaconf
 
 # --------- figures --------- #
 plotly
-seaborn
+seaborn>=0.12.2
 matplotlib
-statannotations==0.5.0
 patchworklib
 
 # --------- loggers --------- #
@@ -50,7 +47,5 @@ rich            # beautiful text formatting in terminal
 pytest          # tests
 # sh            # for running bash commands in some tests (linux/macos only)
 
-# --------- attacks --------- #
-adversarial-robustness-toolbox
-
-gradio
+spacy==3.7.4
+gradio==4.25.0
