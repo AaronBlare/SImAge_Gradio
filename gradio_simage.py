@@ -12,6 +12,8 @@ from scipy.stats import pearsonr
 from models.tabular.widedeep.ft_transformer import WDFTTransformerModel
 import gradio as gr
 from scipy import stats
+from sql_functions import create_database_connection, execute_query, execute_list_query, read_query
+import datetime
 
 import warnings
 
@@ -44,6 +46,8 @@ fn_shap = f"{root_dir}/data/shap.pickle"
 out_dir = f"{root_dir}/out"
 if not os.path.exists(out_dir):
     os.makedirs(out_dir)
+
+connection = create_database_connection("localhost", "root", 'MySqlP@ssword2024!', 'simage_data')
 
 
 def predict_func(x):
@@ -91,6 +95,20 @@ def predict(input):
 
     df_res = df[['SImAge']]
     df_res.to_excel(f'{root_dir}/out/result.xlsx')
+
+    now = datetime.datetime.now()
+    df['Submission_Date'] = now.strftime("%Y-%m-%d %H:%M:%S")
+    df['subject_id'] = df.index + '_' + now.strftime("%Y-%m-%d_%H:%M:%S")
+
+    data_for_sql = df.loc[:,
+                   ['subject_id', 'Submission_Date', 'Age', 'CXCL9', 'CCL22', 'IL6', 'PDGFB', 'CD40LG', 'IL27', 'VEGFA',
+                    'CSF1', 'PDGFA', 'CXCL10', 'SImAge']]
+    sql = '''
+        INSERT INTO data (subject_id, Submission_Date, Age, CXCL9, CCL22, IL6, PDGFB, CD40LG, IL27, VEGFA, CSF1, PDGFA, CXCL10, SImAge) 
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        '''
+    val = list(data_for_sql.itertuples(index=False))
+    execute_list_query(connection, sql, val)
 
     if len(df) > 1:
         mae = mean_absolute_error(df['Age'].values, df['SImAge'].values)

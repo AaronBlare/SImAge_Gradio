@@ -20,6 +20,7 @@ pyod==1.0.6
 missingno==0.5.1
 opentsne
 openpyxl
+mysql-connector-python
 
 # --------- hydra --------- #
 hydra-core==1.2.0
